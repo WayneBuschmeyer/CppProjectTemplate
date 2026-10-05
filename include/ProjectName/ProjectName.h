@@ -6,7 +6,7 @@
 namespace ProjectName
 {
 
-inline constexpr std::string_view PROJECT_NAME{ "ProjectName" };
+inline constexpr std::string_view PROJECT_NAME{"ProjectName"};
 
 // Returns the human-readable project name used by the starter application.
 [[nodiscard]] std::string_view getName() noexcept;

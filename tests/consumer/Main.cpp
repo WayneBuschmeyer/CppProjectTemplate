@@ -7,7 +7,7 @@
 // include path, C++ language requirement, and implementation correctly.
 int main()
 {
-    const std::string_view ACTUAL_PROJECT_NAME{ ProjectName::getName() };
+    const std::string_view ACTUAL_PROJECT_NAME{ProjectName::getName()};
 
     std::cout << ACTUAL_PROJECT_NAME << '\n';
 
