@@ -1,0 +1,331 @@
+name: Build and Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  presets:
+    name: Preset compatibility
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate schema contract
+        run: cmake -P scripts/ValidatePresets.cmake
+
+      - name: Parse every preset kind
+        run: |
+          cmake --list-presets
+          cmake --build --list-presets
+          ctest --list-presets
+          cmake --workflow --list-presets
+
+  windows:
+    name: Windows / ${{ matrix.workflow }}
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow:
+          - msvc-debug
+          - msvc-debug-asan
+          - msvc-relwithdebinfo
+          - msvc-release
+          - clangcl-debug
+          - clangcl-relwithdebinfo
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Windows workflow
+        shell: cmd
+        env:
+          WORKFLOW_PRESET: ${{ matrix.workflow }}
+        run: scripts\Build.cmd %WORKFLOW_PRESET%
+
+  linux:
+    name: Linux / ${{ matrix.workflow }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow:
+          - linux-clang-sanitized
+          - linux-gcc-relwithdebinfo
+          - linux-gcc-release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          cmake --version
+          ninja --version
+          clang --version
+          clang++ --version
+          gcc --version
+          g++ --version
+
+      - name: Run workflow
+        run: cmake --workflow --preset ${{ matrix.workflow }}
+
+  macos:
+    name: macOS / Apple Clang
+    runs-on: macos-26
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          cmake --version
+          ninja --version
+          clang --version
+          clang++ --version
+
+      - name: Run workflow
+        run: cmake --workflow --preset macos-clang-debug
+
+  format:
+    name: Clang-Format
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check C++ formatting
+        shell: bash
+        run: |
+          clang-format-22 --version
+
+          mapfile -d '' files < <(
+            find include src app tests \
+              -type f \
+              \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' -o -name '*.cxx' \) \
+              -print0
+          )
+
+          if ((${#files[@]} > 0)); then
+            clang-format-22 --dry-run --Werror "${files[@]}"
+          fi
+
+  clang-tidy:
+    name: Clang-Tidy
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show analyzer version
+        run: clang-tidy-22 --version
+
+      - name: Run Clang-Tidy workflow
+        run: cmake --workflow --preset linux-clang-tidy
+
+  template-smoke-test:
+    name: Template initialization smoke test
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Copy and initialize template
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP "TemplateSmokeTest"
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
+
+          Get-ChildItem -Force |
+             Where-Object { $_.Name -notin @(".git", ".vs", "out", "build") } |
+             Copy-Item -Destination $destination -Recurse -Force
+
+          Set-Location $destination
+
+          & .\scripts\InitializeProject.cmd TemplateSmokeTest "Automated template smoke-test project"
+
+          if ($LASTEXITCODE -ne 0)
+          {
+             throw "Template initialization failed with exit code $LASTEXITCODE."
+          }
+
+          if (-not (Test-Path ".\include\TemplateSmokeTest\TemplateSmokeTest.h"))
+          {
+             throw "Initialized public header was not renamed correctly."
+          }
+
+          if (-not (Test-Path ".\src\TemplateSmokeTest.cpp"))
+          {
+             throw "Initialized source file was not renamed correctly."
+          }
+
+          $templateTextFiles = @(
+             ".clang-format",
+             ".clang-tidy",
+             ".editorconfig",
+             ".gitattributes",
+             ".gitignore"
+          )
+
+          $candidateFiles = Get-ChildItem -Recurse -Force -File |
+             Where-Object {
+                $_.FullName -notlike "*\scripts\InitializeProject.cmake" -and
+                $_.FullName -notlike "*\scripts\InitializeProject.ps1" -and
+                $_.FullName -notlike "*\scripts\InitializeProject.cmd" -and
+                (
+                   $_.Name -in $templateTextFiles -or
+                   $_.Extension -in @(".cmake", ".cpp", ".cxx", ".h", ".hpp", ".in", ".json", ".md", ".ps1", ".txt", ".vsconfig", ".yml", ".yaml")
+                )
+             }
+
+          $leftovers = $candidateFiles |
+             Select-String -Pattern "ProjectName|PROJECT_TEMPLATE|projectTemplate"
+
+          if ($leftovers)
+          {
+             $leftovers | ForEach-Object { Write-Host $_ }
+             throw "Template placeholders remain after initialization."
+          }
+
+          & .\scripts\Build.cmd msvc-debug
+
+          if ($LASTEXITCODE -ne 0)
+          {
+             throw "Initialized project build failed with exit code $LASTEXITCODE."
+          }
+
+          & .\scripts\InitializeProject.cmd ShouldFail "Second initialization must be rejected"
+
+          if ($LASTEXITCODE -eq 0)
+          {
+             throw "The one-shot initializer unexpectedly succeeded a second time."
+          }
+
+  portable-template-smoke-test:
+    name: Portable template initialization smoke test
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize through portable CMake script
+        shell: bash
+        run: |
+          destination="$RUNNER_TEMP/PortableTemplateSmokeTest"
+          mkdir -p "$destination"
+
+          tar \
+            --exclude=.git \
+            --exclude=.vs \
+            --exclude=out \
+            --exclude=build \
+            -cf - . | tar -xf - -C "$destination"
+
+          cd "$destination"
+
+          cmake \
+            -DPROJECT_NAME=PortableTemplateSmokeTest \
+            -DPROJECT_DESCRIPTION="Portable initializer smoke-test project" \
+            -P scripts/InitializeProject.cmake
+
+          test -f include/PortableTemplateSmokeTest/PortableTemplateSmokeTest.h
+          test -f src/PortableTemplateSmokeTest.cpp
+
+          if grep -R -n -E 'ProjectName|PROJECT_TEMPLATE|projectTemplate' \
+             --exclude=InitializeProject.cmake \
+             --exclude=InitializeProject.ps1 \
+             --exclude=InitializeProject.cmd \
+             --exclude-dir=.git \
+             --exclude-dir=out \
+             --exclude-dir=build \
+             .; then
+            echo "Template placeholders remain after portable initialization."
+            exit 1
+          fi
+
+          cmake --workflow --preset linux-gcc-relwithdebinfo
+
+          if cmake \
+             -DPROJECT_NAME=ShouldFail \
+             -DPROJECT_DESCRIPTION="Second initialization must be rejected" \
+             -P scripts/InitializeProject.cmake; then
+            echo "The one-shot initializer unexpectedly succeeded a second time."
+            exit 1
+          fi
+
+  package-consumer:
+    name: Installed package consumer
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and test release package
+        run: cmake --workflow --preset linux-gcc-release
+
+      - name: Install package
+        run: cmake --install out/build/linux-gcc-release --prefix "$RUNNER_TEMP/project-install"
+
+      - name: Configure external consumer
+        run: >
+          cmake
+          -S tests/consumer
+          -B "$RUNNER_TEMP/consumer-build"
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/project-install"
+
+      - name: Build external consumer
+        run: cmake --build "$RUNNER_TEMP/consumer-build"
+
+      - name: Run external consumer
+        run: "$RUNNER_TEMP/consumer-build/ProjectNameConsumer"
