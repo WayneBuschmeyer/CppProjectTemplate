@@ -18,14 +18,25 @@ function Get-CMakeVersion
         [string]$Executable
     )
 
-    $versionText = & $Executable --version
+    $versionOutput = @(& $Executable --version)
+    $cmakeExitCode = $LASTEXITCODE
 
-    if ($LASTEXITCODE -ne 0 -or $versionText -notmatch "cmake version ([0-9]+\.[0-9]+\.[0-9]+)")
+    if ($cmakeExitCode -ne 0 -or $versionOutput.Count -eq 0)
     {
         throw "Unable to determine the CMake version for '$Executable'."
     }
 
-    return [version]$Matches[1]
+    $versionMatch = [regex]::Match(
+        $versionOutput[0],
+        "^cmake version ([0-9]+\.[0-9]+\.[0-9]+)"
+    )
+
+    if (-not $versionMatch.Success)
+    {
+        throw "Unable to determine the CMake version for '$Executable'."
+    }
+
+    return [version]$versionMatch.Groups[1].Value
 }
 
 function Get-CompatibleCMake
