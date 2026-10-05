@@ -27,6 +27,14 @@ if(NOT EXISTS "${starterHeader}")
     )
 endif()
 
+# This workflow validates the template generator itself. Generated projects keep
+# their normal build/test and CodeQL workflows but should not inherit template-
+# maintenance CI.
+file(
+    REMOVE
+    "${repositoryRoot}/.github/workflows/TemplateValidation.yml"
+)
+
 # Convert PascalCase to UPPER_SNAKE_CASE for option names and include guards.
 string(
     REGEX REPLACE
@@ -124,11 +132,11 @@ foreach(relativePath IN LISTS candidateFiles)
     endif()
 
     set(filePath "${repositoryRoot}/${relativePath}")
-
     file(READ "${filePath}" content)
     string(REPLACE "PROJECT_TEMPLATE" "${projectPrefix}" content "${content}")
     string(REPLACE "projectTemplate" "${projectFunctionPrefix}" content "${content}")
     string(REPLACE "ProjectName" "${PROJECT_NAME}" content "${content}")
+
     # Insert user prose last so placeholder-looking words in the description
     # remain exactly as supplied. Replace the complete starter bracket argument
     # so the generated delimiter is guaranteed not to collide with the prose.
@@ -139,6 +147,7 @@ foreach(relativePath IN LISTS candidateFiles)
         content
         "${content}"
     )
+
     file(WRITE "${filePath}" "${content}")
 endforeach()
 

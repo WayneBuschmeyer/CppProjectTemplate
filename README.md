@@ -37,8 +37,10 @@ scripts\InitializeProject.cmd ExactMath "Exact rational arithmetic and linear al
 The project name must use PascalCase.
 
 Initialization replaces the template placeholders, renames the public include
-directory/header/source file, and gives private CMake helpers a project-specific
-prefix. Running the initializer a second time is intentionally rejected.
+directory/header/source file, gives private CMake helpers a project-specific
+prefix, and removes the template-maintenance validation workflow. The generated
+project keeps its normal build/test and CodeQL workflows. Running the initializer
+a second time is intentionally rejected.
 
 ## Windows development
 

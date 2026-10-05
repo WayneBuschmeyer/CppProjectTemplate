@@ -1,0 +1,73 @@
+name: Template Validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  template-initialization:
+    name: Portable template initialization
+    if: github.repository == 'WayneBuschmeyer/CppProjectTemplate'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize and validate generated project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          destination="$RUNNER_TEMP/PortableTemplateSmokeTest"
+          mkdir -p "$destination"
+          tar \
+            --exclude=.git \
+            --exclude=.vs \
+            --exclude=out \
+            --exclude=build \
+            -cf - . | tar -xf - -C "$destination"
+
+          cd "$destination"
+
+          cmake \
+            -DPROJECT_NAME=PortableTemplateSmokeTest \
+            -DPROJECT_DESCRIPTION="Portable initializer smoke-test project" \
+            -P scripts/InitializeProject.cmake
+
+          test -f include/PortableTemplateSmokeTest/PortableTemplateSmokeTest.h
+          test -f src/PortableTemplateSmokeTest.cpp
+          test -f .github/workflows/BuildAndTest.yml
+          test -f .github/workflows/CodeQL.yml
+
+          if test -e .github/workflows/TemplateValidation.yml; then
+            echo "Template-only validation workflow remains after initialization."
+            exit 1
+          fi
+
+          if grep -R -n -E 'ProjectName|PROJECT_TEMPLATE|projectTemplate' \
+             --exclude=InitializeProject.cmake \
+             --exclude=InitializeProject.ps1 \
+             --exclude=InitializeProject.cmd \
+             --exclude-dir=.git \
+             --exclude-dir=out \
+             --exclude-dir=build \
+             .; then
+            echo "Template placeholders remain after portable initialization."
+            exit 1
+          fi
+
+          cmake --workflow --preset linux-gcc-relwithdebinfo

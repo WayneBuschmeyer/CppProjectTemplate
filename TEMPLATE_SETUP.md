@@ -21,6 +21,9 @@ cmake \
 
 `PROJECT_NAME` must use PascalCase and contain only letters and numbers.
 
+Initialization removes the template-only `TemplateValidation.yml` workflow. The
+generated project keeps the normal build/test and CodeQL workflows.
+
 ## 2. Review the generated project
 
 Check at least:
